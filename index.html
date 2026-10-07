@@ -1,0 +1,860 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Aether Sonic Lab — Пространственный звук, DSP и интерактивное 3D</title>
+<meta name="description" content="Aether Sonic Lab — студия пространственного звука, цифровой обработки в реальном времени (WebAudio/WASM) и интерактивного 3D.">
+<meta name="color-scheme" content="dark">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* ============ 1. ТОКЕНЫ ДИЗАЙН-СИСТЕМЫ ============ */
+:root{
+  --bg:#0A0A0C; --bg-2:#141418; --fg:#F2F2F5; --mute:#8A8A93; --accent:#E65C00; --accent-ink:#0A0A0C;
+  --line:rgba(242,242,245,.12); --line-strong:rgba(242,242,245,.28);
+  /* Syne не содержит кириллицы, поэтому для заголовков взят Unbounded: такой же широкий и плотный */
+  --font-display:'Unbounded','Arial Black','Helvetica Neue',Arial,sans-serif;
+  --font-body:'Inter','Helvetica Neue',Arial,sans-serif;
+  --pad-x:5%; --pad-y:clamp(72px,9vw,120px); --gap:24px;
+  --ease:cubic-bezier(.16,1,.3,1);
+  color-scheme:dark;
+  box-sizing:border-box; padding-bottom:env(safe-area-inset-bottom,0px);
+}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*,*::before,*::after{box-sizing:inherit;margin:0;padding:0}
+html.lenis,html.lenis body{height:auto}
+.lenis.lenis-smooth{scroll-behavior:auto!important}
+body{background:var(--bg);color:var(--fg);font:400 1rem/1.6 var(--font-body);-webkit-font-smoothing:antialiased;overflow-x:hidden}
+a{color:inherit;text-decoration:none}
+button{font:inherit;color:inherit;background:none;border:0}
+img,canvas,svg{display:block;max-width:100%}
+[hidden]{display:none!important}
+:focus-visible{outline:2px solid var(--accent);outline-offset:4px}
+::selection{background:var(--accent);color:var(--accent-ink)}
+
+/* ============ 2. ТИПОГРАФИКА ============ */
+.display{font-family:var(--font-display);font-weight:700;text-transform:uppercase;letter-spacing:-.04em;line-height:1;overflow-wrap:break-word;hyphens:auto}
+.h-xl{font-size:clamp(1.5rem,6.2vw,7.5rem);line-height:.98}
+.h-lg{font-size:clamp(1.5rem,3.9vw,4.4rem)}
+.h-md{font-size:clamp(1.05rem,1.8vw,1.8rem);line-height:1.1}
+.lead{font-size:clamp(1.05rem,1.4vw,1.3rem);color:var(--mute);max-width:46ch}
+.mute{color:var(--mute)}
+.small{font-size:.8125rem;color:var(--mute);letter-spacing:.01em}
+.w{display:inline-block;overflow:hidden;vertical-align:top;padding-bottom:.12em;margin-bottom:-.12em}
+.ch{display:inline-block;will-change:transform}
+
+/* ============ 3. СЕТКА ============ */
+.section{padding:var(--pad-y) var(--pad-x)}
+.grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:var(--gap)}
+.sec-head{align-items:end;row-gap:20px;margin-bottom:clamp(40px,6vw,80px)}
+.sec-head h2{grid-column:1/9}
+.sec-head p{grid-column:9/13}
+@media(max-width:900px){.sec-head h2,.sec-head p{grid-column:1/-1}}
+
+/* ============ 4. ОБОЛОЧКА: прелоадер, курсор, шапка, тост ============ */
+.preloader{position:fixed;inset:0;z-index:100;background:var(--bg);display:flex;flex-direction:column;justify-content:space-between;padding:calc(32px + env(safe-area-inset-top,0px)) var(--pad-x) 32px}
+.pre-title{font-size:clamp(1.5rem,5vw,5rem)}
+.pre-row{display:flex;justify-content:space-between;align-items:flex-end;gap:16px}
+.pre-count{font-family:var(--font-display);font-weight:700;font-size:clamp(2.4rem,8vw,8rem);letter-spacing:-.05em;line-height:.8;font-variant-numeric:tabular-nums}
+.pre-bar{position:absolute;left:0;bottom:0;height:3px;width:100%;background:var(--accent);transform:scaleX(0);transform-origin:left}
+
+/* Курсор: акцентная точка + тонкое кольцо с инерцией.
+   На ссылках кольцо вырастает, на карточках превращается в стеклянную «пилюлю» с подписью. */
+.cursor-dot,.cursor-ring{position:fixed;left:0;top:0;z-index:90;pointer-events:none;opacity:0;border-radius:999px}
+.cursor-dot{width:6px;height:6px;background:var(--accent);transition:opacity .25s}
+.cursor-ring{width:36px;height:36px;display:grid;place-items:center;border:1px solid rgba(242,242,245,.5);
+  transition:width .55s var(--ease),height .55s var(--ease),background .4s,border-color .4s,opacity .3s}
+.cursor-ring span{font:500 .7rem/1 var(--font-body);letter-spacing:.1em;text-transform:uppercase;color:var(--fg);white-space:nowrap;opacity:0;transition:opacity .25s}
+.cursor-dot.on,.cursor-ring.on{opacity:1}
+.cursor-dot.on.hide{opacity:0}
+.cursor-ring.link{width:60px;height:60px;background:rgba(242,242,245,.08);border-color:rgba(242,242,245,.22)}
+.cursor-ring.label{width:124px;height:42px;background:rgba(10,10,12,.55);border-color:var(--line-strong);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
+.cursor-ring.label.wide{width:156px}
+.cursor-ring.label span{opacity:1}
+@media(hover:hover) and (pointer:fine){body,a,button,input,label,select,canvas{cursor:none}}
+@media(hover:none),(pointer:coarse){.cursor-dot,.cursor-ring{display:none}}
+
+.site-header{position:fixed;inset:0 0 auto 0;z-index:50;display:flex;justify-content:space-between;align-items:center;gap:16px;padding:calc(20px + env(safe-area-inset-top,0px)) var(--pad-x) 20px;background:linear-gradient(var(--bg),rgba(10,10,12,0))}
+.logo{display:flex;align-items:center;gap:12px;font:700 .85rem/1 var(--font-display);letter-spacing:-.03em;text-transform:uppercase;white-space:nowrap}
+.logo svg{width:28px;height:28px}
+.nav{display:flex;gap:clamp(16px,3vw,40px);font-size:.9rem}
+.nav a{position:relative;padding:6px 0;color:var(--mute);transition:color .3s}
+.nav a::after{content:"";position:absolute;left:0;right:0;bottom:0;height:1px;background:var(--accent);transform:scaleX(0);transform-origin:right;transition:transform .5s var(--ease)}
+.nav a:hover,.nav a[aria-current="page"]{color:var(--fg)}
+.nav a:hover::after,.nav a[aria-current="page"]::after{transform:scaleX(1);transform-origin:left}
+@media(max-width:700px){.logo{font-size:.7rem}.nav a:not([aria-current]){display:none}.nav a[href="#/tech"]{display:inline}}
+
+.toast{position:fixed;left:50%;bottom:calc(28px + env(safe-area-inset-bottom,0px));z-index:95;transform:translate(-50%,40px);opacity:0;background:var(--fg);color:var(--accent-ink);padding:12px 20px;font-size:.875rem;font-weight:500;pointer-events:none;max-width:90vw}
+
+/* ============ 5. КНОПКИ ============ */
+.btn{display:inline-flex;align-items:center;gap:12px;padding:18px 32px;border-radius:999px;font-weight:500;border:1px solid var(--line-strong);transition:background .4s var(--ease),color .4s,border-color .4s;will-change:transform}
+.btn:hover{border-color:var(--fg)}
+.btn-fill{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn-fill:hover{background:var(--fg);border-color:var(--fg)}
+.btn .in{display:inline-block;will-change:transform}
+
+/* ============ 6. ГЛАВНАЯ: HERO ============ */
+.hero{position:relative;min-height:100svh;display:flex;flex-direction:column;justify-content:flex-end;padding:140px var(--pad-x) 56px;overflow:hidden}
+.hero canvas{position:absolute;inset:0;width:100%;height:100%}
+.hero::after{content:"";position:absolute;inset:auto 0 0 0;height:40%;background:linear-gradient(transparent,var(--bg));pointer-events:none}
+.hero>*:not(canvas){position:relative;z-index:2}
+.hero h1{margin-bottom:clamp(32px,5vw,64px)}
+.hero-foot{align-items:end;row-gap:28px}
+.hero-foot .lead{grid-column:1/6}
+.hero-foot .cta{grid-column:7/13;justify-self:end;display:flex;gap:12px;flex-wrap:wrap;justify-content:flex-end}
+@media(max-width:900px){.hero-foot .lead,.hero-foot .cta{grid-column:1/-1;justify-self:start;justify-content:flex-start}}
+
+/* ============ 7. ГЛАВНАЯ: ШОУРИЛ ============ */
+.reel-wrap{padding:0 var(--pad-x);overflow:hidden}
+.reel{position:relative;height:100svh;max-height:1000px;background:var(--bg-2);overflow:hidden;transform-origin:center;border-radius:64px;will-change:transform}
+.reel canvas{position:absolute;inset:0;width:100%;height:100%}
+.reel-cap{position:absolute;left:32px;right:32px;bottom:28px;display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap}
+.reel-cap .display{font-size:clamp(1.1rem,2.2vw,2.2rem)}
+.reel-cap .small{max-width:34ch}
+
+/* ============ 8. ГЛАВНАЯ: КОМПЕТЕНЦИИ (горизонтальный скролл) ============ */
+.cap{position:relative;background:var(--bg);overflow:hidden}
+.cap-inner{height:100svh;display:flex;flex-direction:column;justify-content:center;gap:clamp(24px,4vh,48px)}
+.cap-head{padding:0 var(--pad-x);display:flex;justify-content:space-between;align-items:end;gap:24px}
+.cap-track{display:flex;gap:var(--gap);padding:0 var(--pad-x);width:max-content;will-change:transform}
+.card{flex:0 0 min(42vw,560px);min-height:clamp(340px,52vh,520px);background:var(--bg-2);border:1px solid var(--line);padding:32px;display:flex;flex-direction:column;justify-content:space-between;transition:border-color .4s}
+.card:hover{border-color:var(--accent)}
+.card svg{width:100%;height:clamp(120px,22vh,200px);color:var(--fg)}
+.card h3{margin:20px 0 10px}
+.cap-progress{margin:0 var(--pad-x);height:1px;background:var(--line);position:relative}
+.cap-progress i{position:absolute;inset:0;background:var(--accent);transform:scaleX(0);transform-origin:left}
+@media(max-width:899px){
+  .cap-inner{height:auto;padding:var(--pad-y) 0}
+  .cap-track{width:auto;overflow-x:auto;scroll-snap-type:x mandatory;padding-bottom:16px}
+  .card{flex-basis:82vw;scroll-snap-align:start}
+  .cap-progress{display:none}
+  .cap-head{flex-direction:column;align-items:flex-start}
+}
+
+/* ============ 9. ГЛАВНАЯ: ИЗБРАННЫЕ РАБОТЫ ============ */
+.work-grid{row-gap:clamp(40px,5vw,72px)}
+.work{display:block;position:relative}
+.work:nth-child(1){grid-column:1/8}
+.work:nth-child(2){grid-column:9/13;margin-top:clamp(0px,10vw,160px)}
+.work:nth-child(3){grid-column:1/6}
+.work:nth-child(4){grid-column:7/13}
+@media(max-width:800px){.work:nth-child(n){grid-column:1/-1;margin-top:0}}
+.thumb{position:relative;overflow:hidden;aspect-ratio:4/3;background:var(--bg-2)}
+.work:nth-child(2) .thumb{aspect-ratio:3/4}
+.art{position:absolute;inset:0;transition:transform 1.2s var(--ease)}
+.work:hover .art,.work:focus-visible .art{transform:scale(1.07)}
+.art-1{background:radial-gradient(circle at 30% 70%,var(--accent) 0,transparent 38%),repeating-radial-gradient(circle at 30% 70%,rgba(242,242,245,.14) 0 1px,transparent 1px 24px),var(--bg-2)}
+.art-2{background:repeating-linear-gradient(90deg,rgba(242,242,245,.2) 0 2px,transparent 2px 12px),linear-gradient(180deg,transparent 30%,rgba(230,92,0,.7)),var(--bg-2)}
+.art-3{background:conic-gradient(from 210deg at 62% 38%,#141418,#2b2b32 25%,var(--accent) 40%,#141418 60%,#2b2b32)}
+.art-4{background:linear-gradient(rgba(242,242,245,.1) 1px,transparent 1px) 0 0/48px 48px,linear-gradient(90deg,rgba(242,242,245,.1) 1px,transparent 1px) 0 0/48px 48px,radial-gradient(circle at 70% 30%,rgba(230,92,0,.85),transparent 45%),var(--bg-2)}
+.reveal-panel{position:absolute;inset:auto 0 0 0;background:var(--bg);padding:20px 24px;display:grid;grid-template-columns:1fr 1fr;gap:12px 24px;transform:translateY(101%);transition:transform .7s var(--ease);font-size:.875rem}
+.reveal-panel dt{color:var(--mute);font-size:.75rem}
+.work:hover .reveal-panel,.work:focus-visible .reveal-panel{transform:none}
+@media(hover:none){.reveal-panel{transform:none;position:static}.thumb{overflow:visible}.art{position:relative;aspect-ratio:4/3}}
+.work-meta{display:flex;justify-content:space-between;gap:16px;align-items:baseline;padding-top:20px;border-top:1px solid var(--line)}
+
+/* ============ 10. ГЛАВНАЯ: ЗВУКОВАЯ ПЕСОЧНИЦА ============ */
+.sandbox{background:var(--bg-2)}
+.sb{align-items:center;row-gap:32px}
+.sb-radar{grid-column:1/7;position:relative;aspect-ratio:1;max-width:560px;width:100%}
+.sb-radar canvas{width:100%;height:100%;touch-action:none;background:var(--bg);border:1px solid var(--line)}
+.sb-ui{grid-column:8/13;display:flex;flex-direction:column;gap:28px}
+@media(max-width:900px){.sb-radar,.sb-ui{grid-column:1/-1}}
+.ctl label{display:flex;justify-content:space-between;font-size:.875rem;margin-bottom:10px}
+.ctl output{font-variant-numeric:tabular-nums;color:var(--accent)}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:24px;background:transparent}
+input[type=range]::-webkit-slider-runnable-track{height:1px;background:var(--line-strong)}
+input[type=range]::-moz-range-track{height:1px;background:var(--line-strong)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;background:var(--fg);margin-top:-9px;transition:background .2s,transform .2s}
+input[type=range]::-moz-range-thumb{width:18px;height:18px;border:0;border-radius:50%;background:var(--fg)}
+input[type=range]:hover::-webkit-slider-thumb{background:var(--accent);transform:scale(1.2)}
+.status{display:flex;align-items:center;gap:10px;font-size:.875rem;color:var(--mute)}
+.status i{width:8px;height:8px;border-radius:50%;background:var(--mute)}
+.status.live i{background:var(--accent);box-shadow:0 0 0 0 rgba(230,92,0,.6);animation:ping 1.6s infinite}
+@keyframes ping{to{box-shadow:0 0 0 12px rgba(230,92,0,0)}}
+
+/* ============ 11. СТРАНИЦА ТЕХНОЛОГИЙ ============ */
+.t-hero{padding:170px var(--pad-x) 56px}
+.t-hero .grid{margin-top:48px;row-gap:24px}
+.t-hero .lead{grid-column:1/6}
+.t-hero .stats{grid-column:7/13;display:flex;gap:40px;justify-content:flex-end;flex-wrap:wrap}
+.stats div{min-width:90px}
+.stats b{display:block;font:700 clamp(1.3rem,2.4vw,2.4rem)/1.1 var(--font-display);letter-spacing:-.05em;margin-bottom:6px}
+@media(max-width:900px){.t-hero .lead,.t-hero .stats{grid-column:1/-1;justify-content:flex-start}}
+.filters{position:sticky;top:0;z-index:20;display:flex;gap:10px;flex-wrap:wrap;align-items:center;padding:18px var(--pad-x);background:rgba(10,10,12,.9);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);border-block:1px solid var(--line)}
+.chip{padding:10px 20px;border:1px solid var(--line-strong);border-radius:999px;font-size:.875rem;transition:background .3s,color .3s,border-color .3s}
+.chip:hover{border-color:var(--fg)}
+.chip[aria-pressed="true"]{background:var(--fg);color:var(--accent-ink);border-color:var(--fg)}
+.filters .count{margin-left:auto}
+.mods{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:var(--gap);padding:48px var(--pad-x) var(--pad-y)}
+.mod{grid-column:span 6;display:flex;flex-direction:column;justify-content:space-between;gap:48px;min-height:340px;padding:32px;background:var(--bg-2);border:1px solid var(--line);transition:border-color .4s,background .4s}
+.mod:hover{border-color:var(--accent)}
+.mod-top{display:flex;justify-content:space-between;gap:16px}
+.tag{font-size:.8125rem;color:var(--mute);border:1px solid var(--line);padding:4px 12px;border-radius:999px;align-self:flex-start;white-space:nowrap}
+.mod h3{margin-bottom:12px}
+.mod dl{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;border-top:1px solid var(--line);padding-top:20px;font-size:.875rem}
+.mod dt{color:var(--mute);font-size:.75rem}
+.mod.feat{grid-column:1/-1;display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:var(--gap);min-height:0;padding:clamp(24px,4vw,56px)}
+.feat .f-copy{grid-column:1/6;display:flex;flex-direction:column;justify-content:space-between;gap:32px}
+.feat .f-graph{grid-column:7/13;align-self:center}
+.feat svg text{fill:var(--mute);font:400 11px var(--font-body)}
+@media(max-width:900px){.mod{grid-column:1/-1}.feat .f-copy,.feat .f-graph{grid-column:1/-1}.mod dl{grid-template-columns:1fr 1fr}}
+
+/* ============ 12. ПОДВАЛ ============ */
+.footer{background:var(--bg);border-top:1px solid var(--line)}
+.f-top{padding:var(--pad-y) var(--pad-x) 40px;row-gap:32px;align-items:end}
+.f-top h2{grid-column:1/8}
+.f-top .mail{grid-column:9/13;justify-self:end;font:500 clamp(1.05rem,1.7vw,1.6rem)/1.1 var(--font-body);border-bottom:1px solid var(--accent);padding-bottom:6px}
+@media(max-width:900px){.f-top h2,.f-top .mail{grid-column:1/-1;justify-self:start}}
+.marquee{overflow:hidden;border-block:1px solid var(--line);padding:20px 0;user-select:none}
+.marquee-track{display:flex;width:max-content;animation:marq 46s linear infinite}
+.marquee-track span{font-size:clamp(3rem,9vw,10rem);padding-right:.6em;white-space:nowrap}
+.marquee-track span:nth-child(even){color:transparent;-webkit-text-stroke:1.5px var(--fg)}
+.marquee:hover .marquee-track{animation-play-state:paused}
+@keyframes marq{to{transform:translateX(-50%)}}
+.f-bot{padding:40px var(--pad-x) 56px;row-gap:28px;font-size:.9rem}
+.f-bot>div{grid-column:span 4}
+.f-bot ul{list-style:none;display:flex;flex-direction:column;gap:4px}
+.f-bot a:hover{color:var(--accent)}
+.f-bot .clock{font:700 clamp(1.3rem,2.4vw,2.2rem)/1 var(--font-display);letter-spacing:-.05em;font-variant-numeric:tabular-nums;margin-top:6px}
+@media(max-width:800px){.f-bot>div{grid-column:1/-1}}
+
+@media(prefers-reduced-motion:reduce){
+  .marquee-track{animation-duration:140s}
+  .art,.reveal-panel{transition:none}
+}
+</style>
+</head>
+<body>
+
+<!-- ПРЕЛОАДЕР -->
+<div class="preloader" role="status" aria-label="Загрузка">
+  <div class="pre-title display" id="preTitle">Aether Sonic Lab</div>
+  <div class="pre-row">
+    <span class="small">Калибруем звуковое поле</span>
+    <div class="pre-count" id="preCount" aria-hidden="true">00</div>
+  </div>
+  <div class="pre-bar" id="preBar"></div>
+</div>
+
+<div class="cursor-ring" id="cursorRing" aria-hidden="true"><span></span></div>
+<div class="cursor-dot" id="cursorDot" aria-hidden="true"></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<header class="site-header" id="header">
+  <a href="#/" class="logo" aria-label="Aether Sonic Lab, на главную">
+    <svg viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="14" cy="14" r="2.2" fill="#E65C00" stroke="none"/><path d="M8.5 14a5.5 5.5 0 0 1 11 0M4.5 14a9.5 9.5 0 0 1 19 0M8.5 14a5.5 5.5 0 0 0 11 0" opacity=".7"/></svg>
+    Aether Sonic Lab
+  </a>
+  <nav class="nav" aria-label="Основная навигация">
+    <a href="#/" data-route="home">Главная</a>
+    <a href="#/tech" data-route="tech">Технологии</a>
+    <a href="#/works" data-route="works">Работы</a>
+    <a href="#/about" data-route="about">О студии</a>
+    <a href="#/contact" data-route="contact">Контакты</a>
+  </nav>
+</header>
+
+<!-- ===================== СТРАНИЦА: ГЛАВНАЯ ===================== -->
+<main id="page-home" data-page="home" hidden>
+
+  <section class="hero" aria-labelledby="heroTitle">
+    <canvas id="waves" aria-hidden="true"></canvas>
+    <h1 id="heroTitle" class="display h-xl" data-hero>Переосмысляем пространственный звук</h1>
+    <div class="grid hero-foot">
+      <p class="lead">Aether — студия пространственного звука, обработки в реальном времени и интерактивного 3D. Мы создаём инструменты и звуковые миры, которые работают прямо в браузере.</p>
+      <div class="cta">
+        <a href="#/contact" class="btn btn-fill" data-magnetic><span class="in">Начать проект</span></a>
+        <a href="#/tech" class="btn" data-magnetic><span class="in">Смотреть модули</span></a>
+      </div>
+    </div>
+  </section>
+
+  <section class="reel-wrap" aria-label="Шоурил">
+    <div class="reel" id="reel" data-cursor="Смотреть">
+      <canvas id="particles" aria-hidden="true"></canvas>
+      <div class="reel-cap">
+        <div class="display">Шоурил 2026</div>
+        <p class="small">Частицы в реальном времени реагируют на амбисоник-поле 3-го порядка</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="cap" id="cap" aria-labelledby="capTitle">
+    <div class="cap-inner">
+      <div class="cap-head">
+        <h2 id="capTitle" class="display h-lg" data-reveal>Ключевые компетенции</h2>
+        <p class="lead">Четыре направления, одна команда инженеров. Прокрутите, чтобы пройти по ним.</p>
+      </div>
+      <div class="cap-track">
+        <article class="card">
+          <svg viewBox="0 0 300 120" fill="none" stroke="currentColor" stroke-width="1" aria-hidden="true"><circle cx="150" cy="60" r="4" fill="#E65C00" stroke="none"/><circle cx="150" cy="60" r="20"/><circle cx="150" cy="60" r="38"/><circle cx="150" cy="60" r="56" opacity=".5"/><circle cx="214" cy="38" r="5" fill="currentColor"/><path d="M150 60 214 38" opacity=".5"/></svg>
+          <div><h3 class="display h-md">Пространственный звук</h3><p class="mute">Бинауральные, амбисоник- и объектные миксы, которые следуют за поворотом головы слушателя. Настроены для наушников и акустических систем.</p></div>
+        </article>
+        <article class="card">
+          <svg viewBox="0 0 300 120" fill="none" stroke="currentColor" stroke-width="1" aria-hidden="true"><path d="M110 30l60-14 50 22-60 16zM110 30v50l50 24V54M220 38v50l-60 16"/><path d="M110 80l60-14 50 22" opacity=".4"/><circle cx="160" cy="54" r="3" fill="#E65C00" stroke="none"/></svg>
+          <div><h3 class="display h-md">WebGL-архитектура</h3><p class="mute">Шейдерные конвейеры и графы сцены, которые держат 60 кадров в секунду на телефонах среднего класса. Анализ звука напрямую управляет отрисовкой.</p></div>
+        </article>
+        <article class="card">
+          <svg viewBox="0 0 300 120" fill="none" stroke="currentColor" stroke-width="1" aria-hidden="true"><path d="M20 60h28l8-34 10 68 10-52 8 30 8-12h180" /><path d="M20 108h260" opacity=".3"/><rect x="224" y="14" width="56" height="22" stroke="#E65C00"/></svg>
+          <div><h3 class="display h-md">WASM DSP</h3><p class="mute">Фильтры, свёртка и ресемплеры, скомпилированные в WebAssembly и работающие в AudioWorklet с предсказуемой задержкой.</p></div>
+        </article>
+        <article class="card">
+          <svg viewBox="0 0 300 120" fill="none" stroke="currentColor" stroke-width="1" aria-hidden="true"><circle cx="90" cy="60" r="38"/><path d="M90 60l22-24" stroke="#E65C00" stroke-width="2"/><circle cx="210" cy="60" r="38" opacity=".5"/><path d="M210 60l-16-26" opacity=".5"/></svg>
+          <div><h3 class="display h-md">Эмуляция железа</h3><p class="mute">Лента, лампы и консоли, смоделированные по замерам, чтобы программа сохраняла дрейф и искажения оригинала.</p></div>
+        </article>
+      </div>
+      <div class="cap-progress" aria-hidden="true"><i id="capBar"></i></div>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="workTitle">
+    <div class="grid sec-head">
+      <h2 id="workTitle" class="display h-lg" data-reveal>Избранные работы</h2>
+      <p class="lead">Концертные залы, музеи и лейблы, которым нужен был звук, вокруг которого можно ходить.</p>
+    </div>
+    <div class="grid work-grid">
+      <a href="#/works" class="work" data-cursor="Смотреть">
+        <div class="thumb"><div class="art art-1"></div>
+          <dl class="reveal-panel"><div><dt>Роль</dt><dd>Аудиодвижок, 3D</dd></div><div><dt>Стек</dt><dd>WebAudio, WebGL2</dd></div></dl></div>
+        <div class="work-meta"><h3 class="display h-md">Nocturne Hall</h3><span class="small">2026</span></div>
+        <p class="small">Конфигуратор концертного зала: можно услышать любое кресло</p>
+      </a>
+      <a href="#/works" class="work" data-cursor="Смотреть">
+        <div class="thumb"><div class="art art-2"></div>
+          <dl class="reveal-panel"><div><dt>Роль</dt><dd>Генеративная партитура</dd></div><div><dt>Стек</dt><dd>WASM, амбисоники</dd></div></dl></div>
+        <div class="work-meta"><h3 class="display h-md">Vessel</h3><span class="small">2025</span></div>
+        <p class="small">Музейная инсталляция: партитура реагирует на шаги посетителей</p>
+      </a>
+      <a href="#/works" class="work" data-cursor="Смотреть">
+        <div class="thumb"><div class="art art-3"></div>
+          <dl class="reveal-panel"><div><dt>Роль</dt><dd>DSP-движок</dd></div><div><dt>Стек</dt><dd>Rust, AudioWorklet</dd></div></dl></div>
+        <div class="work-meta"><h3 class="display h-md">Helix Audio</h3><span class="small">2025</span></div>
+        <p class="small">Аудиодвижок для DAW в браузере с автоматизацией до сэмпла</p>
+      </a>
+      <a href="#/works" class="work" data-cursor="Смотреть">
+        <div class="thumb"><div class="art art-4"></div>
+          <dl class="reveal-panel"><div><dt>Роль</dt><dd>Дизайн опыта</dd></div><div><dt>Стек</dt><dd>Three.js, HRTF</dd></div></dl></div>
+        <div class="work-meta"><h3 class="display h-md">Monolith Records</h3><span class="small">2024</span></div>
+        <p class="small">3D-комната для прослушивания каталога лейбла</p>
+      </a>
+    </div>
+  </section>
+
+  <section class="section sandbox" aria-labelledby="sbTitle">
+    <div class="grid sec-head">
+      <h2 id="sbTitle" class="display h-lg" data-reveal>Звуковая песочница</h2>
+      <p class="lead">Перемещайте источник вокруг головы. Для полного эффекта наденьте наушники.</p>
+    </div>
+    <div class="grid sb">
+      <div class="sb-radar"><canvas id="radar" data-cursor="Тянуть" aria-label="Вид сверху на звуковую сцену. Перетащите источник, чтобы переместить его."></canvas></div>
+      <div class="sb-ui">
+        <div class="status" id="sbStatus"><i></i><span>Звук выключен</span></div>
+        <button class="btn btn-fill" id="sbPlay" style="align-self:flex-start" data-magnetic><span class="in">Включить звук</span></button>
+        <div class="ctl"><label for="az">Направление <output id="azOut">0°</output></label><input id="az" type="range" min="-180" max="180" value="0"></div>
+        <div class="ctl"><label for="dist">Расстояние <output id="distOut">3,0 м</output></label><input id="dist" type="range" min="5" max="80" value="30"></div>
+        <div class="ctl"><label for="room">Размер комнаты <output id="roomOut">35%</output></label><input id="room" type="range" min="0" max="100" value="35"></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- ===================== СТРАНИЦА: ТЕХНОЛОГИИ ===================== -->
+<main id="page-tech" data-page="tech" hidden>
+  <section class="t-hero" aria-labelledby="techTitle">
+    <h1 id="techTitle" class="display h-xl" data-hero>Технологии и модули</h1>
+    <div class="grid">
+      <p class="lead">Наши собственные DSP-алгоритмы и WebGL-движки. Их можно лицензировать или заказать доработку под ваш проект.</p>
+      <div class="stats">
+        <div><b>8</b><span class="small">модулей</span></div>
+        <div><b>1,3 мс</b><span class="small">лучшая задержка</span></div>
+        <div><b>128 КБ</b><span class="small">самая лёгкая WASM-сборка</span></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="filters" role="group" aria-label="Фильтр модулей по категориям">
+    <button class="chip" aria-pressed="true" data-filter="all">Все</button>
+    <button class="chip" aria-pressed="false" data-filter="spatial">Пространство</button>
+    <button class="chip" aria-pressed="false" data-filter="synthesis">Синтез</button>
+    <button class="chip" aria-pressed="false" data-filter="fx">Эффекты</button>
+    <button class="chip" aria-pressed="false" data-filter="canvas">3D Canvas</button>
+    <span class="small count" aria-live="polite">Показано модулей: <span id="modCount">8</span></span>
+  </div>
+
+  <section class="mods" aria-label="Каталог модулей" id="mods">
+    <article class="mod feat" data-cat="spatial" data-cursor="Смотреть">
+      <div class="f-copy">
+        <div>
+          <span class="tag">Пространство</span>
+          <h2 class="display h-lg" style="margin:24px 0 16px">Aether Spatial DSP Engine</h2>
+          <p class="mute" style="max-width:48ch">Наш флагманский бинауральный и амбисоник-рендерер. Подмешивание персонального HRTF, моделирование комнаты и трекинг головы работают в одном AudioWorklet.</p>
+        </div>
+        <dl class="specs" style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;border-top:1px solid var(--line);padding-top:20px;font-size:.875rem">
+          <div><dt class="small">Задержка</dt><dd>1,3 мс</dd></div>
+          <div><dt class="small">Порядок</dt><dd>До 3-го</dd></div>
+          <div><dt class="small">Платформы</dt><dd>Web, iOS, Android</dd></div>
+        </dl>
+      </div>
+      <div class="f-graph">
+        <svg viewBox="0 0 720 260" fill="none" role="img" aria-label="Частотная характеристика движка: ровная от 20 Гц до 1 кГц, небольшой подъём около 3 кГц и спад выше 12 кГц">
+          <g stroke="rgba(242,242,245,.12)"><path d="M0 40h720M0 100h720M0 160h720M0 220h720"/><path d="M60 0v230M200 0v230M360 0v230M520 0v230M660 0v230"/></g>
+          <path id="curve" d="M0 150C60 150 100 148 160 140S250 96 300 98 380 60 440 72 520 130 590 150 660 200 720 206" stroke="#E65C00" stroke-width="2.5"/>
+          <text x="40" y="250">20 Гц</text><text x="186" y="250">200</text><text x="344" y="250">2 кГц</text><text x="502" y="250">8 кГц</text><text x="630" y="250">20 кГц</text>
+        </svg>
+      </div>
+    </article>
+
+    <article class="mod" data-cat="spatial"><div class="mod-top"><div><h3 class="display h-md">Orbit Ambisonic Decoder</h3><p class="mute">Декодирует амбисоники с 1-го по 3-й порядок в бинауральный звук, стерео или любую раскладку колонок по JSON-описанию.</p></div><span class="tag">Пространство</span></div><dl><div><dt>Задержка</dt><dd>2,1 мс</dd></div><div><dt>Сборка</dt><dd>WASM 212 КБ</dd></div><div><dt>Лицензия</dt><dd>Коммерческая</dd></div></dl></article>
+
+    <article class="mod" data-cat="synthesis"><div class="mod-top"><div><h3 class="display h-md">Lattice Wavetable Synth</h3><p class="mute">Морфинг волновых таблиц, осцилляторы без алиасинга и 64 голоса полифонии в одном ворклете.</p></div><span class="tag">Синтез</span></div><dl><div><dt>Голоса</dt><dd>64</dd></div><div><dt>Сборка</dt><dd>WASM 168 КБ</dd></div><div><dt>Лицензия</dt><dd>Коммерческая</dd></div></dl></article>
+
+    <article class="mod" data-cat="synthesis"><div class="mod-top"><div><h3 class="display h-md">Grain Cloud</h3><p class="mute">Гранулярный движок превращает любой сэмпл в движущуюся текстуру. Каждое зерно можно поместить в 3D-пространство.</p></div><span class="tag">Синтез</span></div><dl><div><dt>Зёрна</dt><dd>2 048 разом</dd></div><div><dt>Сборка</dt><dd>WASM 140 КБ</dd></div><div><dt>Лицензия</dt><dd>Исходники по запросу</dd></div></dl></article>
+
+    <article class="mod" data-cat="fx"><div class="mod-top"><div><h3 class="display h-md">Halo Convolution Reverb</h3><p class="mute">Свёртка на секционированном БПФ загружает длинные импульсные отклики и не сбивает аудиопоток.</p></div><span class="tag">Эффекты</span></div><dl><div><dt>Длина IR</dt><dd>До 20 с</dd></div><div><dt>Сборка</dt><dd>WASM 190 КБ</dd></div><div><dt>Лицензия</dt><dd>Коммерческая</dd></div></dl></article>
+
+    <article class="mod" data-cat="fx"><div class="mod-top"><div><h3 class="display h-md">Ferrite Tape Emulator</h3><p class="mute">Насыщение, детонация и флаттер смоделированы по замерам студийного катушечного магнитофона.</p></div><span class="tag">Эффекты</span></div><dl><div><dt>Оверсэмплинг</dt><dd>8×</dd></div><div><dt>Сборка</dt><dd>WASM 128 КБ</dd></div><div><dt>Лицензия</dt><dd>Коммерческая</dd></div></dl></article>
+
+    <article class="mod" data-cat="canvas"><div class="mod-top"><div><h3 class="display h-md">Prism Reactive Renderer</h3><p class="mute">Набор WebGL2-шейдеров, который получает спектр и положение каждого звука в виде uniform-переменных.</p></div><span class="tag">3D Canvas</span></div><dl><div><dt>Цель</dt><dd>60 к/с на телефонах</dd></div><div><dt>Сборка</dt><dd>JS 74 КБ</dd></div><div><dt>Лицензия</dt><dd>Коммерческая</dd></div></dl></article>
+
+    <article class="mod" data-cat="canvas"><div class="mod-top"><div><h3 class="display h-md">Field Particle Solver</h3><p class="mute">Симуляция частиц на GPU с полями curl-шума, которые огибают источники звука.</p></div><span class="tag">3D Canvas</span></div><dl><div><dt>Частицы</dt><dd>1 млн на десктопе</dd></div><div><dt>Сборка</dt><dd>JS 58 КБ</dd></div><div><dt>Лицензия</dt><dd>Исходники по запросу</dd></div></dl></article>
+  </section>
+</main>
+
+<!-- ===================== ПОДВАЛ ===================== -->
+<footer class="footer">
+  <div class="grid f-top">
+    <h2 class="display h-lg">Есть звук на примете?</h2>
+    <a class="mail" href="mailto:studio@aether-sonic.lab" data-cursor="Смотреть">studio@aether-sonic.lab</a>
+  </div>
+  <div class="marquee" aria-hidden="true">
+    <div class="marquee-track display">
+      <span>Создадим то, что можно услышать</span><span>Создадим то, что можно услышать</span>
+      <span>Создадим то, что можно услышать</span><span>Создадим то, что можно услышать</span>
+    </div>
+  </div>
+  <div class="grid f-bot">
+    <div><p class="small">Время в студии, Берлин</p><p class="clock" id="clock">--:--:--</p></div>
+    <div><p class="small">Страницы</p><ul><li><a href="#/">Главная</a></li><li><a href="#/tech">Технологии</a></li><li><a href="#/works">Работы</a></li><li><a href="#/about">О студии</a></li><li><a href="#/contact">Контакты</a></li></ul></div>
+    <div><p class="small">Мы в сети</p><ul><li><a href="#/contact">GitHub</a></li><li><a href="#/contact">Vimeo</a></li><li><a href="#/contact">LinkedIn</a></li></ul><p class="small" style="margin-top:20px">© 2026 Aether Sonic Lab</p></div>
+  </div>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/lenis@1.1.13/dist/lenis.min.js"></script>
+<script>
+(() => {
+'use strict';
+const $  = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const finePointer = matchMedia('(hover:hover) and (pointer:fine)').matches;
+gsap.registerPlugin(ScrollTrigger);
+
+/* ---------- Плавный скролл (Lenis) ---------- */
+let lenis = null;
+if (!reduce && window.Lenis) {
+  lenis = new Lenis({ lerp: 0.09, smoothWheel: true });
+  lenis.on('scroll', ScrollTrigger.update);
+  gsap.ticker.add(t => lenis.raf(t * 1000));
+  gsap.ticker.lagSmoothing(0);
+  lenis.stop();
+}
+
+/* ---------- Разбиение текста на слова/буквы (с доступностью) ---------- */
+function split(el, by = 'char') {
+  if (el.dataset.split) return $$('.ch', el);
+  const text = el.textContent.trim();
+  el.setAttribute('aria-label', text);
+  el.dataset.split = '1';
+  el.textContent = '';
+  text.split(/\s+/).forEach((word, i, arr) => {
+    const w = document.createElement('span');
+    w.className = 'w'; w.setAttribute('aria-hidden', 'true');
+    const parts = by === 'char' ? [...word] : [word];
+    parts.forEach(p => { const c = document.createElement('span'); c.className = 'ch'; c.textContent = p; w.appendChild(c); });
+    el.appendChild(w);
+    if (i < arr.length - 1) el.appendChild(document.createTextNode(' '));
+  });
+  return $$('.ch', el);
+}
+const revealChars = (chars, delay = 0, stagger = 0.03) =>
+  gsap.fromTo(chars, { yPercent: 115 }, { yPercent: 0, duration: 1.2, stagger, delay, ease: 'expo.out' });
+
+/* ---------- Уведомление ---------- */
+const toastEl = $('#toast'); let toastTl;
+function toast(msg) {
+  toastEl.textContent = msg;
+  toastTl && toastTl.kill();
+  toastTl = gsap.timeline()
+    .to(toastEl, { y: 0, opacity: 1, duration: .5, ease: 'expo.out' })
+    .to(toastEl, { y: 40, opacity: 0, duration: .4, delay: 2.6, ease: 'power2.in' });
+}
+
+/* ---------- Кастомный курсор: точка + кольцо ---------- */
+(function cursor() {
+  if (!finePointer) return;
+  const ring = $('#cursorRing'), dot = $('#cursorDot'), label = $('span', ring);
+  gsap.set([ring, dot], { xPercent: -50, yPercent: -50 });
+  const rx = gsap.quickTo(ring, 'x', { duration: .55, ease: 'power3' }), ry = gsap.quickTo(ring, 'y', { duration: .55, ease: 'power3' });
+  const dx = gsap.quickTo(dot, 'x', { duration: .1, ease: 'power3' }),  dy = gsap.quickTo(dot, 'y', { duration: .1, ease: 'power3' });
+  addEventListener('pointermove', e => {
+    ring.classList.add('on'); dot.classList.add('on');
+    rx(e.clientX); ry(e.clientY); dx(e.clientX); dy(e.clientY);
+  }, { passive: true });
+  document.addEventListener('mouseleave', () => { ring.classList.remove('on'); dot.classList.remove('on'); });
+  document.addEventListener('pointerover', e => {
+    const lab = e.target.closest('[data-cursor]');
+    if (lab) {
+      const v = lab.dataset.cursor, drag = v === 'Тянуть';
+      label.textContent = drag ? '← ' + v + ' →' : v;
+      ring.classList.add('label'); ring.classList.toggle('wide', drag); ring.classList.remove('link'); dot.classList.add('hide');
+      return;
+    }
+    ring.classList.remove('label', 'wide'); dot.classList.remove('hide');
+    ring.classList.toggle('link', !!e.target.closest('a,button,input,label,.chip'));
+  });
+})();
+
+/* ---------- Магнитные кнопки ---------- */
+function magnetic(scope) {
+  if (!finePointer) return () => {};
+  const offs = [];
+  $$('[data-magnetic]', scope).forEach(el => {
+    const inner = $('.in', el);
+    const move = e => {
+      const r = el.getBoundingClientRect();
+      const dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
+      gsap.to(el, { x: dx * .3, y: dy * .4, duration: .5, ease: 'power3.out' });
+      inner && gsap.to(inner, { x: dx * .12, y: dy * .15, duration: .5, ease: 'power3.out' });
+    };
+    const leave = () => {
+      gsap.to(el, { x: 0, y: 0, duration: 1, ease: 'elastic.out(1,.4)' });
+      inner && gsap.to(inner, { x: 0, y: 0, duration: 1, ease: 'elastic.out(1,.4)' });
+    };
+    el.addEventListener('pointermove', move); el.addEventListener('pointerleave', leave);
+    offs.push(() => { el.removeEventListener('pointermove', move); el.removeEventListener('pointerleave', leave); });
+  });
+  return () => offs.forEach(f => f());
+}
+
+/* ---------- Шапка прячется при скролле вниз ---------- */
+(function headerHide() {
+  const h = $('#header'); let last = 0, hidden = false;
+  addEventListener('scroll', () => {
+    const y = scrollY, down = y > last && y > 160;
+    if (down !== hidden) { hidden = down; gsap.to(h, { yPercent: down ? -110 : 0, duration: .6, ease: 'expo.out' }); }
+    last = y;
+  }, { passive: true });
+})();
+
+/* ---------- Часы студии ---------- */
+(function clock() {
+  const el = $('#clock');
+  const fmt = new Intl.DateTimeFormat('ru-RU', { timeZone: 'Europe/Berlin', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+  const tick = () => el.textContent = fmt.format(new Date());
+  tick(); setInterval(tick, 1000);
+})();
+
+/* ---------- Canvas: волны в hero ---------- */
+function waves(canvas) {
+  const ctx = canvas.getContext('2d');
+  const m = { x: -999, energy: 0, active: false };
+  let w, h, dpr, raf, t = 0, run = true;
+  const resize = () => { dpr = Math.min(devicePixelRatio || 1, 2); w = canvas.clientWidth; h = canvas.clientHeight; canvas.width = w * dpr; canvas.height = h * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); };
+  const move = e => { const r = canvas.getBoundingClientRect(); m.x = e.clientX - r.left; m.active = true; clearTimeout(move.t); move.t = setTimeout(() => m.active = false, 900); };
+  resize(); addEventListener('resize', resize); addEventListener('pointermove', move, { passive: true });
+  const io = new IntersectionObserver(([e]) => { run = e.isIntersecting; if (run) loop(); }); io.observe(canvas);
+  function loop() {
+    cancelAnimationFrame(raf); if (!run) return;
+    t += reduce ? 0 : .008; m.energy += ((m.active ? 1 : 0) - m.energy) * .05;
+    ctx.clearRect(0, 0, w, h);
+    const L = 34;
+    for (let i = 0; i < L; i++) {
+      const k = i / (L - 1);
+      ctx.beginPath();
+      for (let x = 0; x <= w + 8; x += 8) {
+        const nx = x / w, md = Math.exp(-Math.pow((x - m.x) / (w * .16), 2));
+        const amp = (16 + k * 46) * (1 + md * 1.8 * m.energy);
+        const y = h * .5 + (k - .5) * h * .36 + Math.sin(nx * 5 + t * 1.2 + k * 2.4) * amp + Math.sin(nx * 11 - t * .8 + k * 5) * amp * .35;
+        x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      }
+      ctx.strokeStyle = i % 6 === 0 ? 'rgba(230,92,0,.6)' : 'rgba(242,242,245,' + (.04 + k * .1).toFixed(3) + ')';
+      ctx.lineWidth = 1; ctx.stroke();
+    }
+    raf = requestAnimationFrame(loop);
+  }
+  loop();
+  return () => { run = false; cancelAnimationFrame(raf); removeEventListener('resize', resize); removeEventListener('pointermove', move); io.disconnect(); };
+}
+
+/* ---------- Canvas: сфера из частиц в шоуриле ---------- */
+function particles(canvas) {
+  const ctx = canvas.getContext('2d'); const N = 900;
+  const pts = Array.from({ length: N }, (_, i) => {
+    const y = 1 - (i / (N - 1)) * 2, r = Math.sqrt(1 - y * y), a = i * Math.PI * (3 - Math.sqrt(5));
+    return { x: Math.cos(a) * r, y, z: Math.sin(a) * r, hot: Math.random() < .1 };
+  });
+  const m = { x: 0, y: 0, tx: 0, ty: 0 };
+  let w, h, dpr, raf, ang = 0, run = true;
+  const resize = () => { dpr = Math.min(devicePixelRatio || 1, 2); w = canvas.clientWidth; h = canvas.clientHeight; canvas.width = w * dpr; canvas.height = h * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); };
+  const move = e => { const r = canvas.getBoundingClientRect(); m.tx = (e.clientX - r.left) / r.width - .5; m.ty = (e.clientY - r.top) / r.height - .5; };
+  resize(); addEventListener('resize', resize); addEventListener('pointermove', move, { passive: true });
+  const io = new IntersectionObserver(([e]) => { run = e.isIntersecting; if (run) loop(); }); io.observe(canvas);
+  function loop() {
+    cancelAnimationFrame(raf); if (!run) return;
+    m.x += (m.tx - m.x) * .05; m.y += (m.ty - m.y) * .05;
+    ang += reduce ? 0 : .003;
+    ctx.clearRect(0, 0, w, h);
+    const R = Math.min(w, h) * .32, cx = w / 2, cy = h / 2, pulse = 1 + Math.sin(ang * 14) * .015;
+    const ca = Math.cos(ang + m.x * 1.5), sa = Math.sin(ang + m.x * 1.5), cb = Math.cos(m.y * 1.2 + .3), sb = Math.sin(m.y * 1.2 + .3);
+    for (const p of pts) {
+      let x = p.x * ca - p.z * sa, z = p.x * sa + p.z * ca, y = p.y * cb - z * sb; z = p.y * sb + z * cb;
+      const s = 1 / (1.6 - z * .5), px = cx + x * R * s * 1.6 * pulse, py = cy + y * R * s * 1.6 * pulse;
+      ctx.globalAlpha = Math.max(.12, (z + 1) / 2);
+      ctx.fillStyle = p.hot ? '#E65C00' : '#F2F2F5';
+      ctx.fillRect(px, py, p.hot ? 2.6 : 1.5, p.hot ? 2.6 : 1.5);
+    }
+    ctx.globalAlpha = 1;
+    raf = requestAnimationFrame(loop);
+  }
+  loop();
+  return () => { run = false; cancelAnimationFrame(raf); removeEventListener('resize', resize); removeEventListener('pointermove', move); io.disconnect(); };
+}
+
+/* ---------- Звуковая песочница: настоящая HRTF-сцена на WebAudio ---------- */
+function sandbox() {
+  const canvas = $('#radar'), ctx = canvas.getContext('2d');
+  const azIn = $('#az'), distIn = $('#dist'), roomIn = $('#room'), btn = $('#sbPlay'), statusEl = $('#sbStatus');
+  const st = { az: 0, dist: 3, room: .35, playing: false, pulse: 0 };
+  let ac, panner, dry, wet, timer, w, h, dpr, raf, run = true;
+
+  const impulse = () => {
+    const len = ac.sampleRate * 2.4, buf = ac.createBuffer(2, len, ac.sampleRate);
+    for (let c = 0; c < 2; c++) { const d = buf.getChannelData(c); for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3); }
+    return buf;
+  };
+  function initAudio() {
+    ac = new (window.AudioContext || window.webkitAudioContext)();
+    const master = ac.createGain(); master.gain.value = .55; master.connect(ac.destination);
+    panner = ac.createPanner(); panner.panningModel = 'HRTF'; panner.distanceModel = 'inverse'; panner.refDistance = 1; panner.rolloffFactor = 1;
+    const conv = ac.createConvolver(); conv.buffer = impulse();
+    dry = ac.createGain(); wet = ac.createGain();
+    panner.connect(dry); dry.connect(master); panner.connect(conv); conv.connect(wet); wet.connect(master);
+    applyMix(); applyPos(true);
+  }
+  function applyMix() { if (!ac) return; wet.gain.setTargetAtTime(st.room * .9, ac.currentTime, .05); dry.gain.setTargetAtTime(1 - st.room * .4, ac.currentTime, .05); }
+  function applyPos(now) {
+    if (!panner) return;
+    const a = st.az * Math.PI / 180, x = st.dist * Math.sin(a), z = -st.dist * Math.cos(a), t = ac.currentTime;
+    if (panner.positionX) { const k = now ? 0.001 : .05; panner.positionX.setTargetAtTime(x, t, k); panner.positionY.setTargetAtTime(0, t, k); panner.positionZ.setTargetAtTime(z, t, k); }
+    else panner.setPosition(x, 0, z);
+  }
+  function pluck() {
+    if (Math.random() < .22) return;
+    const t = ac.currentTime, n = [0, 3, 5, 7, 10, 12, 15][Math.floor(Math.random() * 7)];
+    const f = 110 * Math.pow(2, n / 12) * (Math.random() < .3 ? 2 : 1);
+    const o1 = ac.createOscillator(), o2 = ac.createOscillator(), g = ac.createGain(), lp = ac.createBiquadFilter();
+    o1.type = 'sawtooth'; o2.type = 'triangle'; o1.frequency.value = f; o2.frequency.value = f * 1.005;
+    lp.type = 'lowpass'; lp.frequency.setValueAtTime(3200, t); lp.frequency.exponentialRampToValueAtTime(300, t + .5);
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.35, t + .01); g.gain.exponentialRampToValueAtTime(.001, t + .75);
+    o1.connect(lp); o2.connect(lp); lp.connect(g); g.connect(panner);
+    o1.start(t); o2.start(t); o1.stop(t + .85); o2.stop(t + .85);
+    st.pulse = 1;
+  }
+  async function toggle() {
+    if (!ac) initAudio();
+    if (!st.playing) {
+      await ac.resume(); timer = setInterval(pluck, 340); st.playing = true;
+      btn.firstElementChild.textContent = 'Выключить звук'; statusEl.classList.add('live'); statusEl.lastElementChild.textContent = 'Объёмный звук играет';
+    } else {
+      clearInterval(timer); st.playing = false;
+      btn.firstElementChild.textContent = 'Включить звук'; statusEl.classList.remove('live'); statusEl.lastElementChild.textContent = 'Звук выключен';
+    }
+  }
+  const sync = () => {
+    azIn.value = Math.round(st.az); distIn.value = Math.round(st.dist * 10);
+    $('#azOut').textContent = Math.round(st.az) + '°';
+    $('#distOut').textContent = st.dist.toFixed(1).replace('.', ',') + ' м';
+    $('#roomOut').textContent = Math.round(st.room * 100) + '%';
+  };
+  azIn.oninput = () => { st.az = +azIn.value; sync(); applyPos(); };
+  distIn.oninput = () => { st.dist = +distIn.value / 10; sync(); applyPos(); };
+  roomIn.oninput = () => { st.room = +roomIn.value / 100; sync(); applyMix(); };
+  btn.onclick = toggle;
+
+  const resize = () => { dpr = Math.min(devicePixelRatio || 1, 2); w = canvas.clientWidth; h = canvas.clientHeight; canvas.width = w * dpr; canvas.height = h * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); };
+  resize(); addEventListener('resize', resize);
+  const R = () => Math.min(w, h) / 2 * .9;
+  const drag = e => {
+    const r = canvas.getBoundingClientRect(), dx = e.clientX - r.left - w / 2, dy = e.clientY - r.top - h / 2;
+    st.dist = Math.min(8, Math.max(.5, Math.hypot(dx, dy) / R() * 8));
+    st.az = Math.atan2(dx, -dy) * 180 / Math.PI; sync(); applyPos();
+  };
+  let dragging = false;
+  canvas.onpointerdown = e => { dragging = true; canvas.setPointerCapture(e.pointerId); drag(e); };
+  canvas.onpointermove = e => dragging && drag(e);
+  canvas.onpointerup = () => dragging = false;
+  const io = new IntersectionObserver(([e]) => { run = e.isIntersecting; if (run) draw(); }); io.observe(canvas);
+
+  function draw() {
+    cancelAnimationFrame(raf); if (!run) return;
+    ctx.clearRect(0, 0, w, h);
+    const cx = w / 2, cy = h / 2, r = R();
+    ctx.strokeStyle = 'rgba(242,242,245,.12)'; ctx.lineWidth = 1;
+    for (let i = 1; i <= 4; i++) { ctx.beginPath(); ctx.arc(cx, cy, r * i / 4, 0, 7); ctx.stroke(); }
+    ctx.beginPath(); ctx.moveTo(cx - r, cy); ctx.lineTo(cx + r, cy); ctx.moveTo(cx, cy - r); ctx.lineTo(cx, cy + r); ctx.stroke();
+    ctx.fillStyle = '#8A8A93'; ctx.font = '11px Inter, sans-serif'; ctx.fillText('впереди', cx + 8, cy - r + 14); ctx.fillText('2 м', cx + r / 4 + 4, cy - 6); ctx.fillText('8 м', cx + r - 26, cy - 6);
+    const a = st.az * Math.PI / 180, d = st.dist / 8 * r, sx = cx + Math.sin(a) * d, sy = cy - Math.cos(a) * d;
+    ctx.strokeStyle = 'rgba(230,92,0,.5)'; ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(sx, sy); ctx.stroke();
+    st.pulse *= .93;
+    ctx.strokeStyle = 'rgba(230,92,0,' + (st.pulse * .8).toFixed(2) + ')'; ctx.beginPath(); ctx.arc(sx, sy, 10 + (1 - st.pulse) * 34, 0, 7); ctx.stroke();
+    ctx.fillStyle = '#E65C00'; ctx.beginPath(); ctx.arc(sx, sy, 9, 0, 7); ctx.fill();
+    ctx.fillStyle = '#F2F2F5'; ctx.beginPath(); ctx.arc(cx, cy, 12, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(cx, cy - 20); ctx.lineTo(cx - 5, cy - 11); ctx.lineTo(cx + 5, cy - 11); ctx.fill();
+    raf = requestAnimationFrame(draw);
+  }
+  sync(); draw();
+  return () => { run = false; cancelAnimationFrame(raf); clearInterval(timer); removeEventListener('resize', resize); io.disconnect(); if (ac) ac.close(); };
+}
+
+/* ---------- Проявление заголовков при скролле ---------- */
+function revealHeadings(scope) {
+  $$('[data-reveal]', scope).forEach(el => {
+    const chars = split(el, 'word');
+    gsap.fromTo(chars, { yPercent: 115 }, { yPercent: 0, duration: 1.1, stagger: .09, ease: 'expo.out', scrollTrigger: { trigger: el, start: 'top 88%', once: true } });
+  });
+}
+
+/* ============ СТРАНИЦА: ГЛАВНАЯ ============ */
+function initHome(delay) {
+  const page = $('#page-home'), cleanups = [];
+  const ctx = gsap.context(() => {
+    split($('[data-hero]', page)); revealChars($$('.ch', $('[data-hero]', page)), delay, .025);
+    gsap.from('.hero-foot > *', { opacity: 0, y: 24, duration: 1.1, delay: delay + .5, stagger: .12, ease: 'expo.out' });
+
+    // Шоурил: при скролле блок растёт и теряет скругление
+    gsap.fromTo('#reel', { scale: .62, borderRadius: 64 }, { scale: 1, borderRadius: 0, ease: 'none',
+      scrollTrigger: { trigger: '.reel-wrap', start: 'top 90%', end: 'top 5%', scrub: .6 } });
+    gsap.fromTo('.reel-cap', { yPercent: 40, opacity: 0 }, { yPercent: 0, opacity: 1, ease: 'none',
+      scrollTrigger: { trigger: '.reel-wrap', start: 'top 40%', end: 'top 0%', scrub: true } });
+
+    // Параллакс превью работ
+    $$('.work .art', page).forEach((a, i) => gsap.fromTo(a, { yPercent: -6 }, { yPercent: 6 + i, ease: 'none',
+      scrollTrigger: { trigger: a.parentElement, start: 'top bottom', end: 'bottom top', scrub: true } }));
+
+    revealHeadings(page);
+
+    // Компетенции: горизонтальный скролл на десктопе, свайп на мобильных
+    const mm = gsap.matchMedia();
+    mm.add('(min-width: 900px)', () => {
+      const track = $('.cap-track'), bar = $('#capBar');
+      const dist = () => track.scrollWidth - innerWidth;
+      gsap.to(track, { x: () => -dist(), ease: 'none',
+        scrollTrigger: { trigger: '#cap', start: 'top top', end: () => '+=' + dist(), pin: true, scrub: .6, invalidateOnRefresh: true,
+          onUpdate: s => bar.style.transform = 'scaleX(' + s.progress + ')' } });
+    });
+    cleanups.push(() => mm.revert());
+  }, page);
+
+  cleanups.push(waves($('#waves')), particles($('#particles')), sandbox(), magnetic(page), () => ctx.revert());
+  return () => cleanups.forEach(f => f());
+}
+
+/* ============ СТРАНИЦА: ТЕХНОЛОГИИ ============ */
+function initTech(delay) {
+  const page = $('#page-tech'), cleanups = [];
+  const ctx = gsap.context(() => {
+    const h = $('[data-hero]', page); split(h); revealChars($$('.ch', h), delay, .03);
+    gsap.from('.t-hero .grid > *', { opacity: 0, y: 24, duration: 1.1, delay: delay + .5, stagger: .12, ease: 'expo.out' });
+
+    // Кривая частотной характеристики рисуется при скролле
+    const curve = $('#curve', page), len = curve.getTotalLength();
+    gsap.set(curve, { strokeDasharray: len, strokeDashoffset: len });
+    gsap.to(curve, { strokeDashoffset: 0, ease: 'none', scrollTrigger: { trigger: '.feat', start: 'top 80%', end: 'center 45%', scrub: .8 } });
+
+    // Карточки модулей появляются рядами
+    ScrollTrigger.batch('.mod:not(.feat)', { start: 'top 92%', once: true,
+      onEnter: els => gsap.fromTo(els, { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 1, stagger: .1, ease: 'expo.out' }) });
+    gsap.set('.mod:not(.feat)', { opacity: 0 });
+  }, page);
+
+  // Фильтр по категориям без перезагрузки
+  const cards = $$('.mod', page), chips = $$('.chip', page), count = $('#modCount');
+  const onChip = e => {
+    const chip = e.target.closest('.chip'); if (!chip) return;
+    chips.forEach(c => c.setAttribute('aria-pressed', c === chip));
+    const cat = chip.dataset.filter, show = cards.filter(c => cat === 'all' || c.dataset.cat === cat);
+    gsap.killTweensOf(cards);
+    gsap.to(cards, { opacity: 0, y: 20, duration: .25, stagger: .02, ease: 'power2.in', onComplete: () => {
+      cards.forEach(c => c.hidden = !show.includes(c));
+      count.textContent = show.length;
+      gsap.fromTo(show, { opacity: 0, y: 36 }, { opacity: 1, y: 0, duration: .8, stagger: .07, ease: 'expo.out' });
+      ScrollTrigger.refresh();
+    } });
+  };
+  $('.filters', page).addEventListener('click', onChip);
+  $('.feat', page).addEventListener('click', () => toast('Страница модуля пока не входит в эту сборку.'));
+
+  cleanups.push(() => $('.filters', page).removeEventListener('click', onChip), () => { ctx.revert(); gsap.set(cards, { clearProps: 'all' }); cards.forEach(c => c.hidden = false); chips.forEach((c, i) => c.setAttribute('aria-pressed', i === 0)); count.textContent = cards.length; });
+  return () => cleanups.forEach(f => f());
+}
+
+/* ============ РОУТЕР И ПЕРЕХОДЫ МЕЖДУ СТРАНИЦАМИ ============ */
+const pages = { '': 'home', home: 'home', tech: 'tech' };
+const els = { home: $('#page-home'), tech: $('#page-tech') };
+const inits = { home: initHome, tech: initTech };
+let current = null, teardown = null, busy = false;
+
+const routeFromHash = () => location.hash.replace(/^#\/?/, '').split('/')[0];
+function markNav(name) {
+  $$('.nav a').forEach(a => a.dataset.route === name ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current'));
+}
+async function go(name, delay = 0) {
+  if (busy || name === current) return;
+  busy = true;
+  if (current) {
+    gsap.set(els[current], { transformOrigin: '50% 0%' });
+    await gsap.to(els[current], { opacity: 0, scale: .94, duration: .6, ease: 'power2.in' });
+    teardown && teardown(); els[current].hidden = true;
+  }
+  const el = els[name]; el.hidden = false;
+  window.scrollTo(0, 0); lenis && lenis.scrollTo(0, { immediate: true });
+  markNav(name);
+  gsap.fromTo(el, { opacity: 0, scale: 1.04, transformOrigin: '50% 0%' }, { opacity: 1, scale: 1, duration: .8, ease: 'expo.out', clearProps: 'transform,opacity' });
+  teardown = inits[name](current ? .15 : delay);
+  document.title = name === 'tech' ? 'Технологии — Aether Sonic Lab' : 'Aether Sonic Lab — Пространственный звук, DSP и интерактивное 3D';
+  requestAnimationFrame(() => ScrollTrigger.refresh());
+  current = name; busy = false;
+}
+addEventListener('hashchange', () => {
+  const key = routeFromHash();
+  if (key in pages) return go(pages[key]);
+  toast('Эта страница пока не входит в сборку. Доступны «Главная» и «Технологии».');
+  history.replaceState(null, '', current === 'tech' ? '#/tech' : '#/');
+});
+
+/* ============ ПРЕЛОАДЕР ============ */
+(function preload() {
+  const title = $('#preTitle'), num = $('#preCount'), bar = $('#preBar'), pre = $('.preloader');
+  const chars = split(title);
+  const start = pages[routeFromHash()] || 'home';
+  const finish = () => {
+    gsap.timeline({ onComplete: () => { pre.remove(); lenis && lenis.start(); } })
+      .to(chars, { yPercent: -115, duration: .7, stagger: .015, ease: 'expo.in' })
+      .add(() => go(start, .25), '-=.25')
+      .to(pre, { yPercent: -100, duration: 1, ease: 'expo.inOut' }, '-=.3');
+  };
+  if (reduce) { num.textContent = '100'; return finish(); }
+  const o = { v: 0 };
+  revealChars(chars, 0, .03);
+  gsap.to(bar, { scaleX: 1, duration: 2.2, ease: 'power2.inOut' });
+  gsap.to(o, { v: 100, duration: 2.2, ease: 'power2.inOut', onUpdate: () => num.textContent = String(Math.round(o.v)).padStart(2, '0'), onComplete: finish });
+})();
+})();
+</script>
+</body>
+</html>
